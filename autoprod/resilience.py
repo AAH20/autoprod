@@ -1,7 +1,6 @@
+import threading
 import time
-import math
-import asyncio
-from typing import Callable, Any, List, Tuple
+from typing import Callable, Any, List
 from dataclasses import dataclass
 
 class CircuitBreakerOpenError(Exception):
@@ -10,7 +9,7 @@ class CircuitBreakerOpenError(Exception):
 
 class CircuitBreaker:
     """
-    Autonomous Circuit Breaker with exponential recovery and automated state transitions
+    Circuit breaker with timed recovery and automated state transitions
     (CLOSED -> OPEN -> HALF-OPEN).
     """
     def __init__(self, failure_threshold: int = 5, recovery_timeout_s: float = 2.0):
@@ -45,24 +44,29 @@ class CircuitBreaker:
 
 class TokenBucketRateLimiter:
     """
-    Lock-free token bucket rate limiter with jitter backoff to smooth traffic spikes.
+    Thread-safe token bucket rate limiter. Refills tokens continuously based
+    on elapsed wall-clock time and allows a request only if enough tokens are
+    available. Guarded by an internal lock so allow_request() is safe to call
+    from multiple threads.
     """
     def __init__(self, capacity: int = 100, refill_rate_per_s: float = 50.0):
         self.capacity = capacity
         self.refill_rate = refill_rate_per_s
         self.tokens = float(capacity)
         self.last_update = time.time()
+        self._lock = threading.Lock()
 
     def allow_request(self, cost: float = 1.0) -> bool:
-        now = time.time()
-        elapsed = now - self.last_update
-        self.tokens = min(float(self.capacity), self.tokens + elapsed * self.refill_rate)
-        self.last_update = now
+        with self._lock:
+            now = time.time()
+            elapsed = now - self.last_update
+            self.tokens = min(float(self.capacity), self.tokens + elapsed * self.refill_rate)
+            self.last_update = now
 
-        if self.tokens >= cost:
-            self.tokens -= cost
-            return True
-        return False
+            if self.tokens >= cost:
+                self.tokens -= cost
+                return True
+            return False
 
 @dataclass
 class SagaStep:
@@ -72,8 +76,10 @@ class SagaStep:
 
 class SagasCoordinator:
     """
-    Two-Phase Distributed SAGA Coordinator with automatic backward compensation
-    on partial pipeline failures across external APIs.
+    In-process SAGA coordinator: runs a sequence of (action, compensate) steps
+    and, on failure, runs compensate() for every already-executed step in
+    reverse order. Steps can themselves call out to external services, but
+    the coordinator's own state and control flow are single-process.
     """
     def __init__(self):
         self.executed_steps: List[SagaStep] = []

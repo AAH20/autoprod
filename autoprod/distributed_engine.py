@@ -13,8 +13,14 @@ class DeadLetterMessage:
 
 class DistributedEventQueue:
     """
-    In-memory Pub/Sub and Dead-Letter Queue (DLQ) engine with exponential backoff,
+    In-process Pub/Sub and Dead-Letter Queue (DLQ) engine with retry backoff,
     max retry bounds, and poison-pill message isolation.
+
+    Despite the name, this queue does not cross process or machine
+    boundaries: subscribers are Python callables held in memory, and publish()
+    calls them synchronously within the calling thread. It models the
+    retry/DLQ contract a real distributed queue (SQS, Kafka, RabbitMQ) would
+    enforce, for use in tests or as a building block behind a real broker.
     """
     def __init__(self, max_retries: int = 3):
         self.subscribers: Dict[str, List[Callable[[Any], None]]] = {}

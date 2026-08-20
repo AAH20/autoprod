@@ -4,7 +4,13 @@ from typing import List, Dict, Any
 
 class SRETelemetryEngine:
     """
-    Automated P99 Tail-Latency profiler and Root-Cause Postmortem generator.
+    Latency percentile tracker and postmortem document formatter.
+
+    generate_postmortem() formats a Markdown document from facts the caller
+    supplies plus the percentiles this instance has actually recorded. It
+    does not diagnose root cause, detect a trigger, or verify a mitigation —
+    those must come from the caller (or an external incident-response
+    process) as real inputs, not be invented by this class.
     """
     def __init__(self):
         self.latencies_ms: List[float] = []
@@ -31,9 +37,25 @@ class SRETelemetryEngine:
             "tail_stability_ratio": round(tail_ratio, 2)
         }
 
-    def generate_automated_postmortem(self, incident_name: str, root_cause_subsystem: str, impact_description: str) -> str:
+    def generate_postmortem(
+        self,
+        incident_name: str,
+        root_cause_subsystem: str,
+        impact_description: str,
+        trigger: str,
+        mitigation: str,
+        resolution: str,
+    ) -> str:
+        """
+        Format a postmortem Markdown document. `trigger`, `mitigation`, and
+        `resolution` must describe what actually happened for this incident —
+        the caller is responsible for their accuracy; this method only
+        formats them alongside the latency percentiles this instance has
+        recorded.
+        """
         date_str = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
-        return f"""# 🚨 AUTOMATED SRE INCIDENT POSTMORTEM
+        percentiles = self.calculate_percentiles()
+        return f"""# SRE Incident Postmortem
 
 **Incident:** {incident_name}
 **Timestamp:** {date_str}
@@ -42,11 +64,13 @@ class SRETelemetryEngine:
 
 ---
 
-### 1. Architectural Diagnostics
-* **Trigger:** Dynamic traffic spike exceeded un-indexed query thresholds.
-* **Mitigation:** Autonomous circuit breaker tripped in <1.2ms, isolating failing dependency.
-* **Resolution:** Compensating rollbacks executed successfully with zero data split-brain.
+### 1. Recorded Latency ({len(self.latencies_ms)} samples)
+* p50: {percentiles.get('p50_ms', 0.0)} ms
+* p90: {percentiles.get('p90_ms', 0.0)} ms
+* p99: {percentiles.get('p99_ms', 0.0)} ms
 
----
-*Exported directly to [A2Z SOC (a2zsoc.com)](https://a2zsoc.com) for SOC2 Type II compliance audit records.*
+### 2. Incident Timeline
+* **Trigger:** {trigger}
+* **Mitigation:** {mitigation}
+* **Resolution:** {resolution}
 """

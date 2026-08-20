@@ -9,8 +9,16 @@ class WAFSecurityViolation(Exception):
 
 class AutonomousWAF:
     """
-    In-memory Layer-7 Web Application Firewall inspecting payloads for
-    SQL Injection, XSS, SSRF, and Cross-Origin abuse in microsecond budgets.
+    In-memory literal keyword/pattern filter for a fixed list of common SQLi,
+    XSS, and SSRF request signatures.
+
+    This is a denylist match on lowercased request text, not a real WAF: it
+    has no learning, no parsing, and no encoding/obfuscation handling, so it
+    is trivially bypassed (e.g. mixed case with inline comments, HTML entity
+    or URL encoding, alternate SSRF host forms). Use it as a cheap first
+    filter for known-bad literal strings, not as a security boundary. A real
+    deployment needs a maintained WAF (e.g. ModSecurity, Cloudflare) in front
+    of it.
     """
     SQLI_PATTERNS = ["union select", "--", "or 1=1", "drop table", ";--", "exec("]
     XSS_PATTERNS = ["<script>", "javascript:", "onerror=", "onload=", "<svg/onload="]

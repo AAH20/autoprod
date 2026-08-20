@@ -4,18 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoprod"
-version = "0.1.0"
-description = "The Autonomous Invariant-Driven Production Runtime & SRE Substrate for Vibe-Coded AI Applications"
+version = "0.3.0"
+description = "Tested, single-process Python building blocks for common resilience and concurrency patterns"
 authors = [
     { name = "Ahmed Hassan", email = "ahmed.alaa.hassan25@gmail.com" }
 ]
-license = { text = "MIT OR Apache-2.0" }
+license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "pydantic>=2.5.0",
-    "typing_extensions>=4.8.0",
-]
-
-[project.scripts]
-autoprod = "autoprod.cli:main"
+dependencies = []

@@ -29,10 +29,13 @@ class OptimisticLockStore:
             self._store[key] = (new_val, new_ver)
             return new_ver
 
-class LockFreeConnectionPool:
+class BoundedConnectionPool:
     """
-    Bounded connection pool with token-bucket semaphore to prevent downstream
-    database exhaustion under thundering-herd traffic spikes.
+    Lock-guarded bounded connection pool that caps concurrent connections to
+    prevent downstream database exhaustion under thundering-herd traffic spikes.
+
+    This is lock-based, not lock-free: acquire()/release() serialize on an
+    internal threading.Lock. The name reflects the actual mechanism.
     """
     def __init__(self, max_connections: int = 50):
         self.max_connections = max_connections

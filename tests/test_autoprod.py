@@ -1,12 +1,42 @@
 import unittest
 from autoprod.resilience import CircuitBreaker, CircuitBreakerOpenError, TokenBucketRateLimiter, SagasCoordinator, SagaStep
-from autoprod.concurrency import OptimisticLockStore, OptimisticLockConflictError, LockFreeConnectionPool
+from autoprod.concurrency import OptimisticLockStore, OptimisticLockConflictError, BoundedConnectionPool
 from autoprod.sre_telemetry import SRETelemetryEngine
 from autoprod.traffic import AutonomousWAF, WAFSecurityViolation, AdaptiveLoadBalancer
 from autoprod.distributed_engine import DistributedEventQueue, ShardedConsistentHashRing
 from autoprod.deployment import CanaryDeploymentManager
+from autoprod.sre_telemetry import SRETelemetryEngine
 
 class TestAutoProdComprehensive(unittest.TestCase):
+    def test_bounded_connection_pool_caps_at_max(self):
+        pool = BoundedConnectionPool(max_connections=2)
+        self.assertTrue(pool.acquire())
+        self.assertTrue(pool.acquire())
+        self.assertFalse(pool.acquire())  # pool is full
+
+        pool.release()
+        self.assertTrue(pool.acquire())  # slot freed up
+
+    def test_postmortem_uses_recorded_percentiles_not_fabricated_ones(self):
+        engine = SRETelemetryEngine()
+        for ms in [10, 20, 30, 40, 500]:
+            engine.record_latency(ms)
+
+        doc = engine.generate_postmortem(
+            incident_name="checkout latency spike",
+            root_cause_subsystem="payments-service",
+            impact_description="5% of checkouts timed out",
+            trigger="a downstream provider slowed to 500ms p99",
+            mitigation="circuit breaker opened after 5 consecutive failures",
+            resolution="provider recovered; breaker closed automatically",
+        )
+
+        self.assertIn("payments-service", doc)
+        # The percentiles in the document must come from calculate_percentiles(),
+        # not be hardcoded — assert the actual computed p99 appears.
+        expected_p99 = engine.calculate_percentiles()["p99_ms"]
+        self.assertIn(str(expected_p99), doc)
+
     def test_waf_sqli_and_xss_blocking(self):
         waf = AutonomousWAF()
         # Normal request passes

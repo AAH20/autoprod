@@ -1,111 +1,138 @@
 # AutoProd (`autoprod`)
 
-**The Autonomous Invariant-Driven Production Runtime & SRE Substrate for Vibe-Coded AI Applications.**
+**Small, tested, single-process Python building blocks for common resilience and concurrency patterns.**
 
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Zero-Dependency](https://img.shields.io/badge/Dependencies-Pure%20Python-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-Passed%20(6%2F6)-success.svg)]()
-
----
-
-## 1. Bridging the Vibe Coding vs. Production Engineering Divide
-
-Vibe coders and autonomous AI coding agents can generate full-stack web applications in 2 hours. However, the moment that application scales to 100,000 concurrent users, it crashes against the 100 physical laws of distributed systems.
-
-`AutoProd` compiles these 100 manual SRE, database, and networking concepts into **4 autonomous, self-healing sub-planes**:
-
-```
-+---------------------------------------------------------------------------------------------------------+
-|                                    AUTOPROD ARCHITECTURAL MAPPING                                       |
-+---------------------------------------------------------------------------------------------------------+
-| 1. TRAFFIC & EDGE SECURITY PLANE                                                                        |
-|    • WAF (SQLi, XSS, SSRF protection), Adaptive Load Balancing (Least-Connections & Failover),          |
-|      Circuit Breakers, Token-Bucket Rate Limiters, Reverse Proxying.                                    |
-|                                                                                                         |
-| 2. DISTRIBUTED DATA & CONCURRENCY PLANE                                                                 |
-|    • Distributed SAGA Pattern with backward compensating rollbacks, Consistent Hash Sharding,           |
-|      Optimistic Concurrency Control (OCC), Lock-Free Connection Pooling.                                |
-|                                                                                                         |
-| 3. ASYNC MESSAGING & RESILIENCE PLANE                                                                   |
-|    • Event-Driven Pub/Sub, Dead-Letter Queues (DLQ), Poison-Pill Isolation, Exponential Backoff.        |
-|                                                                                                         |
-| 4. DEPLOYMENT & SRE TELEMETRY PLANE                                                                     |
-|    • Automated Canary Deployments with Error Budget Rollbacks, P99 Tail-Latency Profilers,              |
-|      Automated Markdown Incident Postmortems exported to A2Z SOC.                                       |
-+---------------------------------------------------------------------------------------------------------+
-```
+[![CI](https://github.com/AAH20/autoprod/actions/workflows/ci.yml/badge.svg)](https://github.com/AAH20/autoprod/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ---
 
-## 2. Quickstart
+## What this is
 
-### Installation
+`AutoProd` is a small library of correct, independently testable
+implementations of patterns most backend services eventually need:
+
+- `CircuitBreaker` — CLOSED → OPEN → HALF-OPEN state machine with a timed
+  recovery window.
+- `TokenBucketRateLimiter` — thread-safe token bucket, refills continuously
+  based on elapsed time.
+- `SagasCoordinator` / `SagaStep` — runs an ordered sequence of
+  (action, compensate) steps; on failure, runs compensate() for every
+  already-executed step in reverse order.
+- `BoundedConnectionPool` — caps concurrent connections with a lock-guarded
+  counter (not lock-free — the name says what it actually does).
+- `OptimisticLockStore` — versioned key/value store that rejects a write if
+  the version has moved since it was read.
+- `ShardedConsistentHashRing` — consistent hashing with configurable virtual
+  nodes per physical node.
+- `AutonomousWAF` — a literal keyword/pattern filter for a fixed list of
+  known SQLi/XSS/SSRF strings. **Not a real WAF** — see the caveat below.
+- `AdaptiveLoadBalancer` — least-connections routing with health-based
+  failover.
+- `DistributedEventQueue` — in-process pub/sub with retry backoff and a
+  dead-letter queue. Despite the name, this does not cross process or
+  machine boundaries — see the caveat below.
+- `CanaryDeploymentManager` — routes a percentage of traffic to a new
+  version and rolls back automatically if its error rate exceeds a
+  threshold.
+- `SRETelemetryEngine` — tracks latency samples, computes p50/p90/p99, and
+  formats a postmortem Markdown document from percentiles it actually
+  recorded plus facts the caller supplies (it does not invent a root cause).
+
+## What this is not
+
+- **Not autonomous, not a runtime, not a "substrate."** Every class here is
+  a plain Python object you call directly. There is no agent, no
+  orchestration layer, no background process.
+- **`AutonomousWAF` is a denylist, not a firewall.** It matches a fixed list
+  of lowercased literal strings. It has no encoding/obfuscation handling and
+  is trivially bypassed by anyone who tries (mixed case with inline
+  comments, URL/HTML-entity encoding, alternate SSRF host forms). Use it as
+  a cheap first filter, not a security boundary — put a real WAF in front
+  of anything internet-facing.
+- **`DistributedEventQueue` is in-process.** Subscribers are Python
+  callables held in memory; `publish()` calls them synchronously in the
+  calling thread. It models the retry/DLQ contract a real broker (SQS,
+  Kafka, RabbitMQ) would enforce — it does not replace one.
+- **No I/O.** Nothing here talks to a network, disk, or database. It's pure
+  in-memory Python, which is why it has zero dependencies and is easy to
+  read end to end (~450 lines total across 6 files).
+
+## Install
+
+Not yet published to PyPI. Install from source:
+
 ```bash
-pip install autoprod
+git clone https://github.com/AAH20/autoprod.git
+cd autoprod
+pip install -e .
 ```
 
-### Usage: Full End-to-End Resilience Pipeline
+## Usage
+
 ```python
 from autoprod import (
-    AutonomousWAF,
-    AdaptiveLoadBalancer,
+    CircuitBreaker,
+    TokenBucketRateLimiter,
     SagasCoordinator,
     SagaStep,
-    CanaryDeploymentManager,
-    DistributedEventQueue,
+    BoundedConnectionPool,
     ShardedConsistentHashRing,
+    CanaryDeploymentManager,
 )
 
-# 1. In-Memory WAF & SSRF Protection
-waf = AutonomousWAF()
-waf.inspect_payload(query_params="user=100", body="safe payload")
+# Circuit breaker around a flaky call
+breaker = CircuitBreaker(failure_threshold=5, recovery_timeout_s=2.0)
+breaker.call(risky_function)
 
-# 2. Consistent Hash Sharding
+# Consistent hash sharding
 ring = ShardedConsistentHashRing(["shard-1", "shard-2", "shard-3"])
 target_shard = ring.get_node("user_account_98412")
 
-# 3. Two-Phase SAGA with Backward Compensating Rollback
+# SAGA with compensating rollback
 coordinator = SagasCoordinator()
 coordinator.execute_saga([
-    SagaStep("charge", lambda: print("Charged $100"), lambda: print("Refunded $100")),
-    SagaStep("ship", lambda: print("Shipped"), lambda: print("Cancelled shipping"))
+    SagaStep("charge", lambda: charge_card(), lambda: refund_card()),
+    SagaStep("ship", lambda: ship_order(), lambda: cancel_shipping()),
 ])
 
-# 4. Automated Canary Deployment with Instant Rollback on Error Threshold
+# Canary rollout with automatic rollback on error budget breach
 canary = CanaryDeploymentManager(initial_version="v1.0.0")
 canary.start_canary("v2.0.0", weight=0.1)
 canary.report_status(is_success=True)
 ```
 
----
+## Tests
 
-## 3. Architecture
+```bash
+python -m unittest discover tests -v
+```
+
+8/8 pass, and CI runs the same command on every push across Python 3.10–3.12
+(see the badge above — it links to real workflow runs, not a static image).
+
+## Architecture
 
 ```
 autoprod/
 ├── autoprod/
-│   ├── __init__.py            # Clean unified exports
-│   ├── traffic.py             # AutonomousWAF (SQLi, XSS, SSRF) & AdaptiveLoadBalancer
+│   ├── __init__.py            # exports
+│   ├── traffic.py             # AutonomousWAF, AdaptiveLoadBalancer
 │   ├── distributed_engine.py  # DistributedEventQueue, DeadLetterMessage, ShardedConsistentHashRing
-│   ├── resilience.py          # CircuitBreaker, TokenBucket, Two-Phase SagasCoordinator
-│   ├── concurrency.py         # OptimisticLockStore (OCC) & LockFreeConnectionPool
-│   ├── deployment.py          # CanaryDeploymentManager with automated error-budget rollback
-│   └── sre_telemetry.py       # P99 Latency Profiler & Automated SRE Postmortem Generator
+│   ├── resilience.py          # CircuitBreaker, TokenBucketRateLimiter, SagasCoordinator
+│   ├── concurrency.py         # OptimisticLockStore, BoundedConnectionPool
+│   ├── deployment.py          # CanaryDeploymentManager
+│   └── sre_telemetry.py       # SRETelemetryEngine
 └── tests/
-    └── test_autoprod.py       # 100% verified test suite (6/6 comprehensive scenarios)
+    └── test_autoprod.py
 ```
 
----
+## License
 
-## 4. Commercial Integration with A2Z SOC
+Apache-2.0
 
-`AutoProd` streams runtime circuit breaker events, blocked WAF attacks, SAGA rollbacks, canary health metrics, and automated incident postmortems directly into **[A2Z SOC (a2zsoc.com)](https://a2zsoc.com)** for continuous enterprise compliance (SOC2 Type II, ISO 27001, ISO 42001).
+## Author
 
----
-
-## 5. Author
-
-**Ahmed Hassan**  
-*Principal AI Systems Architect | Founder, A2Z SOC*  
-* LinkedIn: [Ahmed Hassan](https://eg.linkedin.com/in/ahmed-hassan-f11)  
+**Ahmed Hassan**
+* LinkedIn: [Ahmed Hassan](https://eg.linkedin.com/in/ahmed-hassan-f11)
 * Platform: [A2Z SOC](https://a2zsoc.com)
